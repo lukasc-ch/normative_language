@@ -161,7 +161,7 @@ spec/                          # the spec root ("the bible")
 Three structures coexist:
 
 1. **The tree** — the directory/heading hierarchy. This is the *ownership and maintenance* structure: every clause has exactly one home, and the tree is how humans navigate and how editing responsibility is divided.
-2. **The graph** — typed cross-references between clauses (`refines`, `depends-on`, `conflicts-with`, `verifies`, `derived-from`, plus plain mentions). This is the *semantic* structure; it is non-tree and freely crosses the hierarchy.
+2. **The graph** — typed cross-references between clauses (`refines`, `depends-on`, `conflicts-with`, `verifies`, `derived-from`, `couples-with`, plus plain mentions). This is the *semantic* structure; it is non-tree and freely crosses the hierarchy.
 3. **The history** — Git commits, plus explicit per-clause revision markers and decision records. This is the *evolution* structure.
 
 The discipline in one sentence: **prose lives in a tree, meaning lives in a graph, time lives in git — and stable clause IDs are the rivets holding all three together.**
@@ -194,7 +194,7 @@ Rules:
 
 - **ID** (`{#FWD-ADM-001}`): assigned once, never reused, never renumbered, survives moves across files. IDs are per-area prefixed (declared in `ndf.yaml`) and issued by the tool (`ndf new-id FWD-ADM`), so agents and humans cannot collide.
 - **Metadata comment**: machine-readable, one line, deliberately minimal:
-  - `kind` — `req` (requirement), `def` (definition), `arch` (architectural statement), `constraint`, `verif` (acceptance criterion), `info` (explicitly non-normative).
+  - `kind` — `req` (requirement), `def` (definition), `arch` (architectural statement), `constraint`, `option` (design-space parameter deferred to exploration, §4.8), `verif` (acceptance criterion), `info` (explicitly non-normative).
   - `level` — `must` / `should` / `may` / `tbd` (RFC-2119-style; `tbd` is legal and honest).
   - `layer` — refinement layer, see §4.6.
   - `status` — `draft` / `stable` / `deprecated` / `superseded-by=ID`.
@@ -275,6 +275,52 @@ Because we accept that the spec will never be complete or fully consistent, inco
 - **Open questions** are items in `open/`, each with an ID (`Q-017`), the clauses it blocks (`blocks=FWD-ADM-001`), and a resolution field. `ndf status` lists them. Resolving one produces a decision record and a clause edit in the same commit.
 - **Known conflicts**: when two clauses are discovered to contradict, the discoverer (often an agent) adds a `conflicts-with` edge and a `Q-` item rather than silently picking a winner. The build warns but does not fail — real projects live with known conflicts for weeks, and pretending otherwise drives contradictions underground.
 - **TBD holes**: `level=tbd` clauses and inline `⟨TBD: max latency bound⟩` markers are counted and reported. A release gate can require zero TBDs in `must` clauses of shipped areas — the *project* chooses its gates; the *format* just makes the holes countable.
+- **Design options** (§4.8) are a distinct, richer kind of open item: a parameter whose *value or mechanism choice* is deferred to design-space exploration, but which carries a default and an allowed range, so nothing is blocked while it stays open. They are counted alongside TBDs and open questions.
+
+### 4.8 Design options: parameters deferred to design-space exploration
+
+A recurring situation in hardware and systems modeling: a quantity is genuinely undecided at model-development time, yet it is not a *gap in intent* (§4.7) — the intent is clear ("there is a reorder buffer, and it has a depth"). What is open is a **value, or a choice among mechanisms**, to be fixed later by *design-space exploration* (DSE): simulation, sweeps, cost/performance/area trade-off studies. Examples: issue-queue and reorder-buffer depth, per-bank bandwidth, the number of concurrent threads per processing element, an arbitration policy (round-robin vs. age-based vs. priority).
+
+The essential asymmetry: **such a quantity is a constant to the RTL implementer but a variable to the model developer.** The RTL freezes one value; the model sweeps a range and lets simulation results choose. A normative format must let both readers see the *same* clause and read off what each needs — the value to build against *and* the space still to be explored.
+
+We give these first-class status as the `option` clause kind. An `option` clause names one design-space parameter and records:
+
+- a **default** — the value the performance model and any early RTL should assume until DSE says otherwise (`default=`);
+- an **exploration range** — the discrete set or interval the parameter is allowed to take during DSE (`explore=`);
+- optional **couplings** — `couples-with=` edges to other options whose values are *not independent*, with the causal / trade-off relationship stated in prose. Parameters frequently constrain one another (e.g. a fixed total resource budget shared across threads), and exploring them one axis at a time misses the real optimum.
+
+```markdown
+## Per-thread reorder-buffer depth {#PRM-ROB-001}
+<!-- ndf: kind=option level=tbd layer=L2 status=draft since=0.4 -->
+<!-- ndf: default=64 explore=32,48,64,96,128 unit=entries -->
+<!-- ndf: couples-with=PRM-SMT-001 depends-on=PRM-IQ-001 -->
+
+The reorder-buffer depth allocated **per hardware thread** is a
+design-space parameter — **TBD, to be determined by design-space
+exploration.** It is a fixed constant in RTL and a swept variable in
+the performance model.
+
+- **default:** 64 entries — assume this until DSE closes the option.
+- **exploration range:** {32, 48, 64, 96, 128} entries.
+- **coupling:** trades off against the SMT thread count
+  ([[PRM-SMT-001]]) under a fixed total ROB budget — the more threads a
+  PE supports concurrently, the smaller each thread's ROB (and issue
+  queue, [[PRM-IQ-001]]) can be. DSE MUST explore the pair jointly,
+  not each axis in isolation.
+
+> rationale: fixing this before the SMT width is known would prejudge
+> the trade-off; see [[decisions/D-0101]] when the sweep resolves it.
+```
+
+Conventions and lifecycle:
+
+- An `option` clause is normally `level=tbd` while open. This is **not a defect** — unlike a bare `⟨TBD⟩` hole, it carries a usable default, so the model and RTL are never blocked: they proceed on the default and record that they did.
+- **Inline options.** Where a parameter appears inside another clause rather than meriting its own, use the inline marker `⟨DSE: <name> default=X range=… → PRM-ID⟩`, the design-space analogue of `⟨TBD: …⟩`. Both are counted by the census (§4.7).
+- **Coupling is explicit and directional in prose.** The `couples-with` edge is symmetric bookkeeping; the *nature* of the dependency — which way it pushes, under what fixed budget — is stated in the body so DSE and reviewers reason about the joint space, not one variable at a time.
+- **Closing an option is a recorded event, not a silent overwrite.** When DSE picks a value, the resolution lands as a decision record plus a clause edit *in the same commit* (§5.2): `default=` becomes the chosen value, `explore=` is retained as history (or narrowed), `level` moves `tbd → must` (it is now a fixed contract), and `status` moves `draft → stable`. The RTL constant and the exploration that set it are thereafter linked.
+- **Options are queryable.** `ndf options` (§8) lists every open parameter with its default, range, and coupling graph — the DSE work list, generated. `ndf coverage` counts open options alongside TBDs and open questions, so the design-space frontier is as visible as the incompleteness frontier.
+
+This keeps the middle path (§2): the parameter's existence and intent are pinned now, in prose a human reads and a model can consume, while the one honestly-open degree of freedom — its value — is represented as a bounded, defaulted, coupled variable rather than either a false constant or an untracked hole.
 
 ---
 
@@ -375,8 +421,9 @@ Deliberately small; each piece is straightforward engineering:
 | `ndf trace ID` | Print refinement/dependency subtree for a clause |
 | `ndf log ID` | Clause-level history across file moves |
 | `ndf diff A..B` | Semantic changelog between baselines |
-| `ndf coverage` | L1→verification coverage; TBD census; `Q-` status |
+| `ndf coverage` | L1→verification coverage; TBD census; open-`option` census; `Q-` status |
 | `ndf deps` | External-reference dependency surface |
+| `ndf options` | List design-space parameters: defaults, ranges, coupling graph, open/closed status (§4.8) |
 | `ndf export` | Explode tree to JSON records (for querying, RAG indexing, dashboards) |
 | `ndf publish` | Render book view (HTML/PDF) with trace matrices |
 | `ndf ingest` | Agent-assisted reference-document projection (§6.2) |
@@ -433,10 +480,12 @@ key           := "kind" | "level" | "layer" | "status" | "since"
                | "refines" | "depends-on" | "conflicts-with"
                | "verifies" | "origin" | "origin-status" | "model"
                | "affects" | "blocks" | "date"
+               | "couples-with" | "default" | "explore" | "unit"
 body          := markdown, containing:
                  [[ID]] | [[ID | text]]        cross-references
                  ```lang ndf:normative ... ``` normative code islands
                  "⟨TBD: ...⟩"                  tracked holes
+                 "⟨DSE: ...⟩"                  design-space parameters (§4.8)
                  "> rationale: ..."            informative rationale
 ```
 

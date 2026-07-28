@@ -161,7 +161,7 @@ spec/                          # 规范根目录（"圣经"）
 三种结构共存：
 
 1. **树**——目录/标题层级。这是*归属与维护*结构：每个条款有且仅有一个家，树是人类导航的方式，也是编辑责任划分的方式。
-2. **图**——条款之间带类型的交叉引用（`refines`、`depends-on`、`conflicts-with`、`verifies`、`derived-from`，外加普通提及）。这是*语义*结构；它是非树的，可以自由穿越层级。
+2. **图**——条款之间带类型的交叉引用（`refines`、`depends-on`、`conflicts-with`、`verifies`、`derived-from`、`couples-with`，外加普通提及）。这是*语义*结构；它是非树的，可以自由穿越层级。
 3. **历史**——Git 提交，加上显式的条款级修订标记与决策记录。这是*演化*结构。
 
 一句话概括这套纪律：**散文活在树里，语义活在图里，时间活在 git 里——而稳定的条款 ID 是把三者铆在一起的铆钉。**
@@ -194,7 +194,7 @@ Frames failing any condition MUST be discarded and the per-port
 
 - **ID**（`{#FWD-ADM-001}`）：一次分配，永不复用，永不重编号，跨文件移动后依然存续。ID 按区域加前缀（在 `ndf.yaml` 中声明），由工具签发（`ndf new-id FWD-ADM`），因此 agent 和人类不会发生冲突。
 - **元数据注释**：机器可读，单行，刻意保持极简：
-  - `kind` —— `req`（需求）、`def`（定义）、`arch`（架构陈述）、`constraint`（约束）、`verif`（验收准则）、`info`（显式的非规范性内容）。
+  - `kind` —— `req`（需求）、`def`（定义）、`arch`（架构陈述）、`constraint`（约束）、`option`（推迟到探索阶段确定的设计空间参数，见 §4.8）、`verif`（验收准则）、`info`（显式的非规范性内容）。
   - `level` —— `must` / `should` / `may` / `tbd`（RFC 2119 风格；`tbd` 是合法且诚实的取值）。
   - `layer` —— 精化层，见 §4.6。
   - `status` —— `draft` / `stable` / `deprecated` / `superseded-by=ID`。
@@ -275,6 +275,52 @@ def select_next(queues, deficit, quantum):
 - **开放问题**是 `open/` 下的条目，各有 ID（`Q-017`）、其阻塞的条款（`blocks=FWD-ADM-001`）和一个决议字段。`ndf status` 列出它们。解决一个开放问题，会在同一次提交中产生一条决策记录和一处条款修改。
 - **已知矛盾**：当发现两个条款相互矛盾时，发现者（通常是 agent）添加一条 `conflicts-with` 边和一个 `Q-` 条目，而不是悄悄选一个赢家。构建会警告但不会失败——真实项目会带着已知矛盾生活数周，假装不是这样只会把矛盾逼入地下。
 - **TBD 空洞**：`level=tbd` 的条款和行内的 `⟨TBD: max latency bound⟩` 标记会被计数并报告。发布门禁可以要求已交付区域的 `must` 条款中 TBD 数为零——*项目*选择自己的门禁；*格式*只负责让空洞可计数。
+- **设计选项（design option）**（§4.8）是一类独立而更丰富的开放条目：其*取值或机制选择*被推迟到设计空间探索阶段确定，但它携带一个默认值和一个允许范围，因此在其保持开放期间不会阻塞任何工作。它们与 TBD、开放问题一并被计数。
+
+### 4.8 设计选项：推迟到设计空间探索的参数
+
+硬件与系统建模中反复出现的一种情形：某个量在模型开发阶段确实尚未确定，但它并不是一处*意图上的缺口*（§4.7）——意图是清楚的（"存在一个重排序缓冲区，它有一个深度"）。开放的是一个**取值，或若干机制之间的选择**，留待后续由*设计空间探索*（design-space exploration，DSE）来敲定：仿真、扫描、成本/性能/面积的权衡研究。例子：发射队列（issue queue）与重排序缓冲区（reorder buffer）的深度、每 bank 带宽、每个处理单元（PE）支持的同时线程数、仲裁策略（轮询 vs. 按年龄 vs. 按优先级）。
+
+关键的不对称性在于：**这样一个量，对 RTL 实现者是常量，对模型开发者却是变量。** RTL 冻结为单一取值；模型则扫描一个范围，让仿真结果来选。规范格式必须让两类读者看到*同一*条款，各取所需——既有可据以构建的取值，*也有*仍待探索的空间。
+
+我们把它们提升为一等公民，即 `option` 条款类型。一个 `option` 条款命名一个设计空间参数，并记录：
+
+- 一个**默认值（default）**——在 DSE 另有结论之前，性能模型和任何早期 RTL 应假定的取值（`default=`）；
+- 一个**探索范围（exploration range）**——该参数在 DSE 期间允许取的离散集合或区间（`explore=`）；
+- 可选的**耦合关系（coupling）**——`couples-with=` 边，指向那些取值*并不独立*的其他选项，并在散文中陈述其因果/权衡关系。参数之间常常相互约束（例如线程间共享的一个固定总资源预算），逐一维度地探索会错过真正的最优点。
+
+```markdown
+## Per-thread reorder-buffer depth {#PRM-ROB-001}
+<!-- ndf: kind=option level=tbd layer=L2 status=draft since=0.4 -->
+<!-- ndf: default=64 explore=32,48,64,96,128 unit=entries -->
+<!-- ndf: couples-with=PRM-SMT-001 depends-on=PRM-IQ-001 -->
+
+The reorder-buffer depth allocated **per hardware thread** is a
+design-space parameter — **TBD, to be determined by design-space
+exploration.** It is a fixed constant in RTL and a swept variable in
+the performance model.
+
+- **default:** 64 entries — assume this until DSE closes the option.
+- **exploration range:** {32, 48, 64, 96, 128} entries.
+- **coupling:** trades off against the SMT thread count
+  ([[PRM-SMT-001]]) under a fixed total ROB budget — the more threads a
+  PE supports concurrently, the smaller each thread's ROB (and issue
+  queue, [[PRM-IQ-001]]) can be. DSE MUST explore the pair jointly,
+  not each axis in isolation.
+
+> rationale: fixing this before the SMT width is known would prejudge
+> the trade-off; see [[decisions/D-0101]] when the sweep resolves it.
+```
+
+约定与生命周期：
+
+- `option` 条款在开放期间通常是 `level=tbd`。这**不是缺陷**——与一个光秃秃的 `⟨TBD⟩` 空洞不同，它携带一个可用的默认值，因此模型和 RTL 永远不会被阻塞：它们基于默认值继续推进，并记录下这么做了。
+- **行内选项。** 当某个参数出现在另一个条款内部、不值得单列一条时，使用行内标记 `⟨DSE: <name> default=X range=… → PRM-ID⟩`，即 `⟨TBD: …⟩` 的设计空间对应物。二者都被普查（§4.7）计数。
+- **耦合关系在散文中显式且有方向。** `couples-with` 边是对称的簿记；依赖的*本质*——它往哪个方向推、在什么固定预算之下——写在正文里，好让 DSE 和评审者对联合空间进行推理，而不是一次只看一个变量。
+- **关闭一个选项是一次有记录的事件，而非静默覆盖。** 当 DSE 选定一个取值时，该决议在同一次提交中落地为一条决策记录加一处条款修改（§5.2）：`default=` 变为选定的取值，`explore=` 作为历史保留（或收窄），`level` 从 `tbd → must`（它现在是一份固定的契约），`status` 从 `draft → stable`。此后，RTL 常量与设定它的那次探索相互链接。
+- **选项是可查询的。** `ndf options`（§8）列出每个开放参数及其默认值、范围和耦合图——生成的 DSE 工作清单。`ndf coverage` 把开放选项与 TBD、开放问题一并计数，于是设计空间的边界与不完整性的边界一样可见。
+
+这守住了中间道路（§2）：参数的存在与意图现在就被钉住，以人类可读、模型可消费的散文写下；而那唯一诚实开放的自由度——它的取值——被表示为一个有界、有默认、带耦合的变量，而不是一个虚假的常量或一处未受追踪的空洞。
 
 ---
 
@@ -375,8 +421,9 @@ in the same session overrides the cycle-9 guidance to "check FCS late."
 | `ndf trace ID` | 打印某条款的精化/依赖子树 |
 | `ndf log ID` | 跨文件移动的条款级历史 |
 | `ndf diff A..B` | 基线之间的语义变更日志 |
-| `ndf coverage` | L1→验证覆盖率；TBD 普查；`Q-` 状态 |
+| `ndf coverage` | L1→验证覆盖率；TBD 普查；开放 `option` 普查；`Q-` 状态 |
 | `ndf deps` | 外部参考依赖面 |
+| `ndf options` | 列出设计空间参数：默认值、范围、耦合图、开放/关闭状态（§4.8） |
 | `ndf export` | 把树炸开为 JSON 记录（供查询、RAG 索引、仪表盘） |
 | `ndf publish` | 渲染书籍视图（HTML/PDF），含追踪矩阵 |
 | `ndf ingest` | Agent 辅助的参考文档投影（§6.2） |
@@ -433,10 +480,12 @@ key           := "kind" | "level" | "layer" | "status" | "since"
                | "refines" | "depends-on" | "conflicts-with"
                | "verifies" | "origin" | "origin-status" | "model"
                | "affects" | "blocks" | "date"
+               | "couples-with" | "default" | "explore" | "unit"
 body          := markdown，其中可包含：
                  [[ID]] | [[ID | text]]        交叉引用
                  ```lang ndf:normative ... ``` 规范性代码岛
                  "⟨TBD: ...⟩"                  受追踪的空洞
+                 "⟨DSE: ...⟩"                  设计空间参数（§4.8）
                  "> rationale: ..."            资料性的设计依据
 ```
 
