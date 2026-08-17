@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ndf-cli"
+version = "0.1.0"
+description = "Reference toolchain for NDF (Normative Description Format) clause trees"
+readme = "README.md"
+requires-python = ">=3.10"
+# NOTE: add a `license` field once the repository declares one.
+
+[project.scripts]
+ndf = "ndf:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["ndf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
