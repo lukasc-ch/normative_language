@@ -1,0 +1,4 @@
+# NDF manifest for the chronometer example (normative_language.md, Appendix C).
+project: chrono
+id-prefixes: [CHR, DEF, CNT, CTL, DSP, PIN, CON, VER, D, Q]
+layers: {L0: intent, L1: contract, L2: mechanism, L3: executable}
