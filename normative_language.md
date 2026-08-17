@@ -771,8 +771,9 @@ set the ⟨TBD⟩ in CTL-DEB-001 and add a debounce acceptance test.
 ### C.9 What the tools say
 
 At this baseline (`spec-v0.2`), the toolchain output summarizes the state
-honestly (verbatim from the reference implementation, run on
-[`examples/chrono/`](examples/chrono/)):
+honestly (verbatim lines from the reference implementation's output on
+[`examples/chrono/`](examples/chrono/); the `coverage` block is excerpted to
+the rows relevant here):
 
 ```
 $ ndf trace CHR-000

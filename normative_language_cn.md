@@ -767,7 +767,8 @@ set the ⟨TBD⟩ in CTL-DEB-001 and add a debounce acceptance test.
 ### C.9 工具怎么说
 
 在这个基线（`spec-v0.2`）上，工具链的输出诚实地总结了现状（以下为参考
-实现在 [`examples/chrono/`](examples/chrono/) 上的逐字输出）：
+实现在 [`examples/chrono/`](examples/chrono/) 上输出的逐字摘录；`coverage`
+块节选了与此处相关的行）：
 
 ```
 $ ndf trace CHR-000
