@@ -302,7 +302,7 @@ def test_metadata_value_containing_equals_is_parsed() -> None:
     assert meta["status"] == "superseded-by=MEM-TLSU-002"
 
 
-def test_multiple_meta_comments_merge(tmp_path: Path) -> None:
+def test_multiple_meta_comments_are_an_error(tmp_path: Path) -> None:
     root = write_tree(
         tmp_path,
         {
@@ -321,9 +321,26 @@ def test_multiple_meta_comments_merge(tmp_path: Path) -> None:
         },
     )
     tree = NDF.load_tree(root)
+    # A clause has exactly one metadata comment; extra comments are an
+    # error, but their values are still merged for reporting.
+    assert check_codes(root).get("multiple-meta") == "error"
     clause = tree.clauses["ROB-001"]
     assert clause.kind == "req"
     assert clause.edge("blocks-by") == ["Q-001"]
+
+
+def test_l1_root_without_l0_is_a_note(tmp_path: Path) -> None:
+    root = write_tree(
+        tmp_path,
+        {
+            "a.md": (
+                "## A {#ROB-001}\n"
+                "<!-- ndf: kind=req level=must layer=L1 status=stable -->\n\n"
+                "It MUST exist.\n"
+            )
+        },
+    )
+    assert check_codes(root).get("clutter") == "note"
 
 
 # ---------------------------------------------------------------------------
@@ -374,14 +391,16 @@ def test_coverage_counts(tmp_path: Path) -> None:
 # the chrono example (normative_language.md, Appendix C)
 
 
-def test_chrono_check_is_error_free() -> None:
+def test_chrono_check_is_clean_except_one_note() -> None:
     tree = NDF.load_tree(CHRONO)
     assert len(tree.clauses) == 16
     findings = NDF.run_check(tree)
-    assert [f for f in findings if f.severity == "error"] == []
+    assert [f for f in findings if f.severity in ("error", "warning")] == []
     # Known state: PIN-001 does not refine up to CHR-000 (Appendix C keeps
-    # interface clauses as roots).
-    assert [f.clause for f in findings] == ["PIN-001"]
+    # interface clauses as roots) — structural clutter, reported as a note.
+    assert [(f.clause, f.severity, f.code) for f in findings] == [
+        ("PIN-001", "note", "clutter")
+    ]
 
 
 def test_chrono_coverage_matches_appendix_c9() -> None:

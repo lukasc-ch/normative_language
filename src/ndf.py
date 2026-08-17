@@ -73,6 +73,7 @@ class Clause:
     body: str = ""
     refs: list[str] = field(default_factory=list)
     has_meta: bool = False
+    meta_comments: int = 0
 
     @property
     def kind(self) -> str:
@@ -108,7 +109,7 @@ class Manifest:
 
 @dataclass
 class Finding:
-    severity: str  # "error" | "warning"
+    severity: str  # "error" | "warning" | "note"
     code: str
     clause: str
     file: str
@@ -235,6 +236,7 @@ def load_tree(root: Path) -> Tree:
                 if meta_match:
                     clause.meta.update(parse_meta(meta_match.group("body")))
                     clause.has_meta = True
+                    clause.meta_comments += 1
                     continue
                 break
             clause.body = "\n".join(lines[idx + 1 : end])
@@ -344,11 +346,22 @@ def run_check(tree: Tree) -> list[Finding]:
                         f"{key}={target} does not resolve",
                     )
 
-        # Metadata presence and shape.
+        # Metadata presence and shape. A clause has exactly one metadata
+        # comment; values from extra comments are still merged for
+        # reporting, but the clause is in error.
         if not clause.has_meta:
             add("warning", "missing-meta", clause, "no <!-- ndf: ... --> metadata")
-        elif not clause.kind:
-            add("warning", "missing-kind", clause, "metadata has no kind=")
+        else:
+            if clause.meta_comments > 1:
+                add(
+                    "error",
+                    "multiple-meta",
+                    clause,
+                    f"{clause.meta_comments} metadata comments; a clause has "
+                    "exactly one",
+                )
+            if not clause.kind:
+                add("warning", "missing-kind", clause, "metadata has no kind=")
 
         # Keyword discipline.
         if clause.kind == "req" and manifest.require_keyword_in_req:
@@ -369,8 +382,9 @@ def run_check(tree: Tree) -> list[Finding]:
 
         # Layer parenting, following refines= chains transitively (trees
         # legitimately chain L2 -> L2 -> L1). Definitional and process
-        # clauses (def/arch at L1, def at L2, question/decision anywhere)
-        # are exempt, matching observed tree usage.
+        # clauses (def/arch/constraint at L1, def at L2, question/decision
+        # anywhere) are exempt. An L1 clause that never reaches L0 is
+        # structural clutter — reported as a note, not a violation.
         exempt = clause.kind in ("question", "decision")
         if clause.layer == "L2" and clause.kind != "def" and not exempt:
             if not reaches_layer(tree, clause, "L1"):
@@ -387,10 +401,11 @@ def run_check(tree: Tree) -> list[Finding]:
         ):
             if not reaches_layer(tree, clause, "L0"):
                 add(
-                    "warning",
-                    "layer-l1-parent",
+                    "note",
+                    "clutter",
                     clause,
-                    "layer=L1 clause does not reach an L0 clause via refines=",
+                    "layer=L1 clause does not reach an L0 clause via "
+                    "refines= (structural clutter, not a violation)",
                 )
 
         # Ban-words in must-level clauses. Judgment-dependent (e.g. "support"
@@ -432,7 +447,8 @@ def run_check(tree: Tree) -> list[Finding]:
                     f'ID prefix "{prefix}" is not registered in ndf.yaml',
                 )
 
-    findings.sort(key=lambda f: (f.severity != "error", f.file, f.line))
+    rank = {"error": 0, "warning": 1, "note": 2}
+    findings.sort(key=lambda f: (rank[f.severity], f.file, f.line))
     return findings
 
 
@@ -440,6 +456,7 @@ def cmd_check(tree: Tree, args: argparse.Namespace) -> int:
     findings = run_check(tree)
     errors = [f for f in findings if f.severity == "error"]
     warnings = [f for f in findings if f.severity == "warning"]
+    notes = [f for f in findings if f.severity == "note"]
     if args.json:
         print(
             json.dumps(
@@ -448,6 +465,7 @@ def cmd_check(tree: Tree, args: argparse.Namespace) -> int:
                     "clauses": len(tree.clauses),
                     "errors": len(errors),
                     "warnings": len(warnings),
+                    "notes": len(notes),
                     "findings": [vars(f) for f in findings],
                 },
                 indent=2,
@@ -462,7 +480,8 @@ def cmd_check(tree: Tree, args: argparse.Namespace) -> int:
             )
         print(
             f"\nndf check: {len(tree.clauses)} clauses, "
-            f"{len(errors)} errors, {len(warnings)} warnings"
+            f"{len(errors)} errors, {len(warnings)} warnings, "
+            f"{len(notes)} notes"
         )
     if errors:
         return 1
@@ -713,7 +732,9 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser("check", help="lint the NDF tree")
     p_check.add_argument("--json", action="store_true", help="JSON report")
     p_check.add_argument(
-        "--strict", action="store_true", help="warnings also fail the run"
+        "--strict",
+        action="store_true",
+        help="warnings also fail the run (notes stay informational)",
     )
     p_check.set_defaults(func=cmd_check)
 

@@ -15,8 +15,7 @@ stopped, regardless of the current state. See [[D-0001 | D-0001]] for
 the rejected "reset keeps running" alternative.
 
 ## Button conditioning {#CTL-DEB-001}
-<!-- ndf: kind=req level=must layer=L1 refines=CHR-000 status=draft since=0.1 -->
-<!-- ndf: blocks-by=Q-001 -->
+<!-- ndf: kind=req level=must layer=L1 refines=CHR-000 status=draft since=0.1 blocks-by=Q-001 -->
 
 Each raw button input MUST be synchronized to `clk` (min. 2 flops) and
 debounced such that one physical press yields exactly one press event.
