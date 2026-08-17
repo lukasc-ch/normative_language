@@ -479,7 +479,7 @@ meta-comment  := "<!-- ndf:" (key "=" value)+ "-->"
 key           := "kind" | "level" | "layer" | "status" | "since"
                | "refines" | "depends-on" | "conflicts-with"
                | "verifies" | "origin" | "origin-status" | "model"
-               | "affects" | "blocks" | "date"
+               | "affects" | "blocks" | "blocks-by" | "date" | "author"
                | "couples-with" | "default" | "explore" | "unit"
 body          := markdown, containing:
                  [[ID]] | [[ID | text]]        cross-references
@@ -488,6 +488,27 @@ body          := markdown, containing:
                  "⟨DSE: ...⟩"                  design-space parameters (§4.8)
                  "> rationale: ..."            informative rationale
 ```
+
+Grammar rules the toolchain enforces:
+
+- **Exactly one metadata comment per clause.** All keys go into the single
+  `<!-- ndf: ... -->` line; multiple consecutive metadata comments are an
+  error (`ndf check`: `multiple-meta`).
+- **`blocks-by`** is the inverse edge of a question's `blocks`: a clause may
+  declare the open `Q-*` items gating it.
+- **`author`** is optional in the base grammar; a project may require it on
+  `decision`/`question` clauses via `lint: require-author: true` in
+  `ndf.yaml`.
+- **Tracked holes need the colon form.** Only `⟨TBD: ...⟩` / `⟨DSE: ...⟩`
+  count in the census; a bare `⟨TBD⟩` token is a textual mention of a hole,
+  not a hole.
+- **Refinement layering is checked transitively.** An L2 clause may reach L1
+  through a chain of L2 `refines=` edges. `def`/`arch`/`constraint` clauses
+  (and `question`/`decision` records) are exempt from layer-parenting
+  checks. Lint findings carry three severities: **error** (violation),
+  **warning** (judgment-dependent, promoted by `--strict`), and **note** —
+  structural clutter such as an L1 clause that never traces to an L0
+  intent, informational only.
 
 ## Appendix B — Worked micro-example of a refinement series
 
@@ -605,8 +626,7 @@ stopped, regardless of the current state. See [[D-0001 | D-0001]] for
 the rejected "reset keeps running" alternative.
 
 ## Button conditioning {#CTL-DEB-001}
-<!-- ndf: kind=req level=must layer=L1 refines=CHR-000 status=draft since=0.1 -->
-<!-- ndf: blocks-by=Q-001 -->
+<!-- ndf: kind=req level=must layer=L1 refines=CHR-000 status=draft since=0.1 blocks-by=Q-001 -->
 
 Each raw button input MUST be synchronized to `clk` (min. 2 flops) and
 debounced such that one physical press yields exactly one press event.
@@ -750,22 +770,35 @@ set the ⟨TBD⟩ in CTL-DEB-001 and add a debounce acceptance test.
 
 ### C.9 What the tools say
 
-At this baseline (`spec-v0.2`), the toolchain output summarizes the state honestly:
+At this baseline (`spec-v0.2`), the toolchain output summarizes the state
+honestly (verbatim from the reference implementation, run on
+[`examples/chrono/`](examples/chrono/)):
 
 ```
 $ ndf trace CHR-000
-CHR-000 (L0 intent)
+CHR-000 (L0)
 ├── CTL-SS-001 (L1) ── verified by VER-CTL-001
 ├── CTL-RST-001 (L1) ── verified by VER-CTL-001
 ├── CTL-DEB-001 (L1, draft, 1 TBD, blocked by Q-001)   ⚠ unverified
-├── CNT-001 (L1) ── verified by VER-CTL-001, VER-CNT-002
+├── CNT-001 (L1) ── verified by VER-CNT-002, VER-CTL-001
 │   ├── CNT-TCK-010 (L2)
 │   └── CNT-BCD-010 (L2) ── verified by VER-CNT-002
 └── DSP-001 (L1) ── verified by VER-DSP-003
 
 $ ndf coverage
-L1 must-clauses: 6   verified: 5   unverified: 1 (CTL-DEB-001)
-TBD holes: 1 (CTL-DEB-001)   open questions: 1 (Q-001)   conflicts: 0
+L1 must contracts:    8
+  verifies-linked:    4 (4 unverified)
+  unverified:         CON-CLK-001, CTL-DEB-001, DEF-001, PIN-001
+TBD markers:          1
+conflicts:            0
+open questions:       1 of 1
 ```
+
+"L1 must contracts" counts every `layer=L1 level=must` clause regardless of
+`kind` — definitions and constraints owe verification linkage too, or an
+explicit decision that they need none; the census keeps them visible either
+way. `CTL-DEB-001` is the one *behavioral* gap (§C.7's deliberate hole);
+`ndf check` additionally reports PIN-001 as structural clutter (an L1 root
+that never traces to L0 intent) — a note, not a violation.
 
 Even at this toy scale the payoff pattern is visible: the "make it count like a clock" prompt from cycle 1 did not vanish into a chat log — it was superseded by a recorded decision (`D-0001`) that two clauses cite; the one genuinely undecided engineering parameter is a tracked hole, not an ambush; and an agent asked to "implement the counter" can be handed exactly `CNT-*` plus its one-hop neighborhood (`CTL-RST-001`, `CON-CLK-001`, `D-0001`) instead of a transcript.
