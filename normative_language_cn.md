@@ -479,7 +479,7 @@ meta-comment  := "<!-- ndf:" (key "=" value)+ "-->"
 key           := "kind" | "level" | "layer" | "status" | "since"
                | "refines" | "depends-on" | "conflicts-with"
                | "verifies" | "origin" | "origin-status" | "model"
-               | "affects" | "blocks" | "date"
+               | "affects" | "blocks" | "blocks-by" | "date" | "author"
                | "couples-with" | "default" | "explore" | "unit"
 body          := markdown，其中可包含：
                  [[ID]] | [[ID | text]]        交叉引用
@@ -488,6 +488,23 @@ body          := markdown，其中可包含：
                  "⟨DSE: ...⟩"                  设计空间参数（§4.8）
                  "> rationale: ..."            资料性的设计依据
 ```
+
+工具链强制执行的文法规则：
+
+- **每个条款恰好一条元数据注释。** 所有键都写进唯一的 `<!-- ndf: ... -->`
+  行；连续出现多条元数据注释是错误（`ndf check`：`multiple-meta`）。
+- **`blocks-by`** 是问题条款 `blocks` 的反向边：条款可以声明阻塞它的开放
+  `Q-*` 项。
+- **`author`** 在基础文法中可选；项目可以通过 `ndf.yaml` 中的
+  `lint: require-author: true` 要求 `decision`/`question` 条款必须带
+  author。
+- **受追踪的空洞需要冒号形式。** 只有 `⟨TBD: ...⟩` / `⟨DSE: ...⟩` 计入
+  普查；裸的 `⟨TBD⟩` 记号只是对空洞的文字提及，不是空洞本身。
+- **精化分层按传递闭包检查。** L2 条款可以经由一串 L2 `refines=` 边到达
+  L1。`def`/`arch`/`constraint` 条款（以及 `question`/`decision` 记录）
+  豁免于分层父子检查。Lint 发现分三个严重级别：**error**（违规）、
+  **warning**（依赖判断，`--strict` 时升级失败）、**note**——结构性
+  杂乱（例如从未溯源到 L0 意图的 L1 条款），仅供参考。
 
 ## 附录 B——精化序列的微型实例
 
@@ -605,8 +622,7 @@ stopped, regardless of the current state. See [[D-0001 | D-0001]] for
 the rejected "reset keeps running" alternative.
 
 ## Button conditioning {#CTL-DEB-001}
-<!-- ndf: kind=req level=must layer=L1 refines=CHR-000 status=draft since=0.1 -->
-<!-- ndf: blocks-by=Q-001 -->
+<!-- ndf: kind=req level=must layer=L1 refines=CHR-000 status=draft since=0.1 blocks-by=Q-001 -->
 
 Each raw button input MUST be synchronized to `clk` (min. 2 flops) and
 debounced such that one physical press yields exactly one press event.
@@ -750,22 +766,33 @@ set the ⟨TBD⟩ in CTL-DEB-001 and add a debounce acceptance test.
 
 ### C.9 工具怎么说
 
-在这个基线（`spec-v0.2`）上，工具链的输出诚实地总结了现状：
+在这个基线（`spec-v0.2`）上，工具链的输出诚实地总结了现状（以下为参考
+实现在 [`examples/chrono/`](examples/chrono/) 上的逐字输出）：
 
 ```
 $ ndf trace CHR-000
-CHR-000 (L0 intent)
+CHR-000 (L0)
 ├── CTL-SS-001 (L1) ── verified by VER-CTL-001
 ├── CTL-RST-001 (L1) ── verified by VER-CTL-001
 ├── CTL-DEB-001 (L1, draft, 1 TBD, blocked by Q-001)   ⚠ unverified
-├── CNT-001 (L1) ── verified by VER-CTL-001, VER-CNT-002
+├── CNT-001 (L1) ── verified by VER-CNT-002, VER-CTL-001
 │   ├── CNT-TCK-010 (L2)
 │   └── CNT-BCD-010 (L2) ── verified by VER-CNT-002
 └── DSP-001 (L1) ── verified by VER-DSP-003
 
 $ ndf coverage
-L1 must-clauses: 6   verified: 5   unverified: 1 (CTL-DEB-001)
-TBD holes: 1 (CTL-DEB-001)   open questions: 1 (Q-001)   conflicts: 0
+L1 must contracts:    8
+  verifies-linked:    4 (4 unverified)
+  unverified:         CON-CLK-001, CTL-DEB-001, DEF-001, PIN-001
+TBD markers:          1
+conflicts:            0
+open questions:       1 of 1
 ```
+
+"L1 must contracts" 统计所有 `layer=L1 level=must` 的条款，不区分
+`kind`——定义和约束同样欠着验证链接，或者欠一条"无需验证"的明确决策；
+无论哪种情况，普查都让它们保持可见。`CTL-DEB-001` 是唯一的*行为性*缺口
+（§C.7 有意留下的空洞）；`ndf check` 还会把 PIN-001 报告为结构性杂乱
+（一个从未溯源到 L0 意图的 L1 根条款）——这是一条 note，不是违规。
 
 即使在这个玩具尺度上，收益模式已经清晰可见：第 1 周期那句"让它像时钟一样计数"的 prompt 没有消失在聊天记录里——它被一条有记录的决策（`D-0001`）取代，且有两个条款引用了这条决策；那个唯一真正悬而未决的工程参数是一个受追踪的空洞，而不是一次伏击；而一个被要求"实现计数器"的 agent，可以精确地拿到 `CNT-*` 及其一跳邻域（`CTL-RST-001`、`CON-CLK-001`、`D-0001`），而不是一份聊天转录。
